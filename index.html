@@ -1239,6 +1239,18 @@ $('#newChat').addEventListener('click',()=>{
   if(chat.busy&&chat.ctrl)chat.ctrl.abort();
   saveChat();chat.history=[];chat.id=null;LS.del('activeChat');inner.innerHTML='';chatAtt.clear();renderWelcome();
 });
+const IMG_RULE='You can make images right inside this chat. When the person asks you to draw, create, generate, design, edit or show a picture, image, logo, wallpaper, poster, sprite, avatar, art or photo, reply with ONE short friendly line, then on its own line write [[IMAGE: a vivid, detailed description of the image: subject, style, colours, lighting, composition]]. If they attached an image and want it changed, describe the full change. Never say you cannot make images and never fake it with ASCII art or SVG. Use that line for nothing else.';
+const IMG_RE=/\[\[IMAGE:([\s\S]*?)\]\]/i,hideImg=t=>t.replace(/\[\[IMAGE:[\s\S]*?(\]\]|$)/gi,''),keepImg=t=>t.replace(/\[\[IMAGE:([\s\S]*?)\]\]/gi,'[Image generated: $1]');
+async function inlineImage(md$,acc,refs,signal){
+  const m=acc.match(IMG_RE);if(!m||!m[1].trim())return;const prompt=m[1].trim();
+  const box=document.createElement('div');box.className='painting';box.innerHTML='<span class="bar"></span><span>Painting with '+esc(state.imgModel)+'</span>';md$.append(box);toEnd();
+  try{
+    const r=await generateImage({model:state.imgModel,prompt,aspect:$('#aspectSel').value,refs,signal});box.remove();
+    r.images.forEach(im=>{generated.push(im);const n=generated.length-1,fig=document.createElement('figure');fig.className='genimg';
+      fig.innerHTML='<img alt="'+esc(prompt.slice(0,120))+'" src="data:'+im.mime+';base64,'+im.data+'"><div class="acts"><button type="button" class="btn ghost small" data-dl="'+n+'">Download</button><button type="button" class="btn ghost small" data-use="'+n+'">Edit this image</button></div>';md$.append(fig)});
+  }catch(e){box.remove();if(e.name==='AbortError'){md$.insertAdjacentHTML('beforeend','<div class="muted">Stopped.</div>')}else md$.insertAdjacentHTML('beforeend','<div class="err" style="margin-top:12px">Couldn’t make the image: '+esc(e.message)+'</div>')}
+  toEnd();
+}
 $('#chatForm').addEventListener('submit',async e=>{
   e.preventDefault();
   const btn=$('#chatSend');
@@ -1271,9 +1283,9 @@ $('#chatForm').addEventListener('submit',async e=>{
       const parts=buildParts(text||'Look at the attached file(s) and tell me what is in them.',atts);
       chat.history.push({role:'user',parts});
       let acc='',fin=false;
-      const paint=raf(()=>{if(fin)return;md$.innerHTML=md(acc);toEnd()});
+      const paint=raf(()=>{if(fin)return;md$.innerHTML=md(hideImg(acc));toEnd()});
       try{
-        await streamGemini({model:state.model,contents:chat.history,system:chatSystem(),signal:chat.ctrl.signal,onText:t=>{acc+=t;paint()}});
+        await streamGemini({model:state.model,contents:chat.history,system:chatSystem()+' '+IMG_RULE,signal:chat.ctrl.signal,onText:t=>{acc+=t;paint()}});
         fin=true;
       }catch(err){
         fin=true;
@@ -1283,10 +1295,12 @@ $('#chatForm').addEventListener('submit',async e=>{
         throw err;
       }
       if(!acc){chat.history.pop();throw new Error('Gemini sent an empty reply. Try again.')}
-      chat.history.push({role:'model',parts:[{text:acc}]});
-      md$.innerHTML=md(acc);
-      saveChat();addActions(bm,acc);
-      if(LS.get('readAloud')==='1')speakDevice(acc);
+      chat.history.push({role:'model',parts:[{text:keepImg(acc)}]});
+      const shown=hideImg(acc).trim();
+      md$.innerHTML=shown?md(shown):'';
+      saveChat();addActions(bm,shown||'(image)');
+      if(LS.get('readAloud')==='1'&&shown)speakDevice(shown);
+      await inlineImage(md$,acc,atts.filter(a=>a.kind==='image'),chat.ctrl.signal);
     }
   }catch(err){
     if(err.name!=='AbortError'&&!$('.err',md$))md$.innerHTML='<div class="err">'+esc(err.message)+'</div>';
@@ -1374,13 +1388,13 @@ async function regenLast(){
   const bm=addMsg('bot'),md$=$('.md',bm),btn=$('#chatSend');
   md$.innerHTML='<span class="dots"><i></i><i></i><i></i></span>';
   toEnd(true);chat.busy=true;chat.ctrl=new AbortController();setBusy(btn,true,'Send');
-  let acc='',fin=false;const paint=raf(()=>{if(fin)return;md$.innerHTML=md(acc);toEnd()});
+  let acc='',fin=false;const paint=raf(()=>{if(fin)return;md$.innerHTML=md(hideImg(acc));toEnd()});
   const restore=msg=>{chat.history.push(last);bm.remove();inner.append(lastMsg);refreshRegen();toast(msg)};
   try{
-    await streamGemini({model:state.model,contents:chat.history,system:chatSystem(),signal:chat.ctrl.signal,onText:t=>{acc+=t;paint()}});
+    await streamGemini({model:state.model,contents:chat.history,system:chatSystem()+' '+IMG_RULE,signal:chat.ctrl.signal,onText:t=>{acc+=t;paint()}});
     fin=true;
     if(!acc){restore('Gemini sent an empty reply, so I kept the old one.')}
-    else{chat.history.push({role:'model',parts:[{text:acc}]});md$.innerHTML=md(acc);saveChat();addActions(bm,acc);if(LS.get('readAloud')==='1')speakDevice(acc)}
+    else{chat.history.push({role:'model',parts:[{text:keepImg(acc)}]});const shown=hideImg(acc).trim();md$.innerHTML=shown?md(shown):'';saveChat();addActions(bm,shown||'(image)');if(LS.get('readAloud')==='1'&&shown)speakDevice(shown);await inlineImage(md$,acc,[],chat.ctrl.signal)}
   }catch(err){
     fin=true;
     if(acc){chat.history.push({role:'model',parts:[{text:acc}]});md$.innerHTML=md(acc);saveChat();addActions(bm,acc)}
@@ -1950,9 +1964,10 @@ $('#callForm').addEventListener('submit',async e=>{
 $$('[data-logo]').forEach(i=>{i.src=LOGO});
 const fav=document.createElement('link');fav.rel='icon';fav.href=LOGO;document.head.append(fav);
 /* ---------- profiles ---------- */
-const VERSION='2.4';
+const VERSION='2.5';
 const CHANGELOG=[
-  {v:'2.4',d:'Latest',items:['Cleaner three-line menu: it now only shows your chats, with Settings at the top. About you, Export this chat and Delete all chats moved into Settings.','Smarter answers: Musketeers plans before replying, double-checks maths and code, asks one short question only when it really needs to, and tells you when it is unsure instead of guessing.','Cooler look: glowing aurora background, shimmering logo, glassy header, menus and dialogs, smooth message animations and neon hover effects.']},
+  {v:'2.5',d:'Latest',items:['Make images right in the chat: just ask, like “draw a neon dragon” or “make me a logo”. No need to switch to Image mode. Attach a photo and say what to change to edit it. Every picture has Download and Edit buttons.']},
+  {v:'2.4',d:'Earlier',items:['Cleaner three-line menu: it now only shows your chats, with Settings at the top. About you, Export this chat and Delete all chats moved into Settings.','Smarter answers: Musketeers plans before replying, double-checks maths and code, asks one short question only when it really needs to, and tells you when it is unsure instead of guessing.','Cooler look: glowing aurora background, shimmering logo, glassy header, menus and dialogs, smooth message animations and neon hover effects.']},
   {v:'2.3',d:'Earlier',items:['Musketeers now has a temper: he can swear, but only when he is really mad. Turn it off any time in Settings under Personality.']},
   {v:'2.2',d:'Earlier',items:['Every reply has Copy, Listen and Regenerate buttons.','Search your chats, rename them, and export any chat as a Markdown file.','Backup and restore: download everything to a file and load it back, even on another phone.','Chat text size slider in Settings, and a personal welcome when you have set your name.']},
   {v:'2.1',d:'Earlier',items:['Three-line menu on the left with all your saved chats.','About you: tell Musketeers your name, background and how you like answers, and it replies with that in mind.']},
