@@ -332,6 +332,28 @@ dialog textarea{resize:vertical}
   #callDlg[open]{padding:max(14px,env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom,0px))}
 }
 
+#renDlg{width:min(400px,calc(100vw - 32px));margin:14vh auto auto;padding:22px 20px 18px;border-radius:22px;background:radial-gradient(120% 90% at 50% 0%,color-mix(in srgb,#7c4dff 22%,var(--panel)),var(--panel) 70%);border:1px solid color-mix(in srgb,#7c4dff 55%,var(--line));box-shadow:0 24px 70px rgba(0,0,0,.65),0 0 50px rgba(124,77,255,.22)}
+#renDlg::backdrop{background:rgba(3,2,6,.62);backdrop-filter:blur(4px)}
+#renDlg[open]{animation:renPop .26s cubic-bezier(.2,1.1,.3,1)}
+#renDlg[open]::backdrop{animation:renFade .22s ease-out}
+#renDlg h2{margin:0 0 14px;font-size:16px}
+#renInput{width:100%;font-size:16px;padding:13px 14px;border-radius:14px;background:var(--ink);border:1px solid var(--line);outline:none;transition:border-color .15s,box-shadow .15s}
+#renInput:focus{border-color:#7c4dff;box-shadow:0 0 0 4px rgba(124,77,255,.22)}
+.ren-meta{display:flex;justify-content:space-between;gap:10px;margin:8px 4px 16px;font-size:12px;color:var(--muted)}
+.ren-actions{display:flex;gap:10px}
+.ren-actions .btn{flex:1;min-height:44px;border-radius:999px}
+#renSave{background:#7c4dff;color:#fff;box-shadow:0 4px 16px rgba(124,77,255,.4)}
+#renDlg.shake{animation:renShake .35s}
+.drow.renamed{position:relative;border-color:#7c4dff;background-image:linear-gradient(105deg,transparent 35%,rgba(150,110,255,.5) 50%,transparent 65%);background-size:260% 100%;animation:renShine 1.1s ease-out,renPulse 1.3s ease-out}
+.rl{display:inline-block;animation:rlPop .55s cubic-bezier(.2,1.4,.4,1) both}
+.spk{position:absolute;top:50%;width:7px;height:7px;margin:-3px 0 0 -3px;border-radius:50%;background:#c4adff;box-shadow:0 0 10px #7c4dff;pointer-events:none;animation:spk .95s ease-out forwards}
+@keyframes renPop{from{opacity:0;transform:translateY(18px) scale(.94)}to{opacity:1;transform:none}}
+@keyframes renFade{from{opacity:0}to{opacity:1}}
+@keyframes renShake{20%,60%{transform:translateX(-7px)}40%,80%{transform:translateX(7px)}}
+@keyframes renShine{from{background-position:130% 0}to{background-position:-30% 0}}
+@keyframes renPulse{from{box-shadow:0 0 0 0 rgba(124,77,255,.75)}to{box-shadow:0 0 0 16px rgba(124,77,255,0)}}
+@keyframes rlPop{0%{opacity:0;transform:translateY(10px) scale(.5);filter:blur(5px);color:#fff}60%{color:#c4adff}100%{opacity:1;transform:none;filter:none}}
+@keyframes spk{from{opacity:1;transform:translate(0,0) scale(1)}to{opacity:0;transform:translate(var(--dx),var(--dy)) scale(.2)}}
 @media (prefers-reduced-motion:reduce){
   *{animation:none!important;transition:none!important;scroll-behavior:auto!important}
 }
@@ -586,6 +608,14 @@ dialog input[type=range]{width:100%;accent-color:var(--mode)}
     <span class="grow"></span>
     <button type="button" class="btn" id="camShot">Take photo</button>
   </div>
+</dialog>
+<dialog id="renDlg" aria-label="Rename chat">
+  <form id="renForm" autocomplete="off">
+    <h2>Rename chat</h2>
+    <input id="renInput" type="text" maxlength="80" spellcheck="false" aria-label="Chat name" placeholder="Name this chat">
+    <div class="ren-meta"><span>Pick a name you will remember</span><span id="renCount">0/80</span></div>
+    <div class="ren-actions"><button type="button" class="btn ghost" id="renCancel">Cancel</button><button type="submit" class="btn" id="renSave">Save</button></div>
+  </form>
 </dialog>
 <dialog id="callDlg" aria-label="Voice call" data-state="idle">
   <div class="call-top">
@@ -1988,9 +2018,40 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape'&&drawer.classList.co
 $('#drawerNew').addEventListener('click',()=>{$('#newChat').click();setTab('chat');closeDrawer()});
 $('#drawerSet').addEventListener('click',()=>{closeDrawer();openSettings()});
 $('#aboutBtn').addEventListener('click',()=>{closeDrawer();openAbout()});
+const renDlg=$('#renDlg'),renInput=$('#renInput'),renCount=$('#renCount');let renId=null;
+function openRename(c){
+  renId=c.id;renInput.value=c.title;renCount.textContent=c.title.length+'/80';
+  openDlg(renDlg);setTimeout(()=>{renInput.focus();renInput.select()},80);
+}
+function celebrateRename(id){
+  const btn=$('#drawerList [data-o="'+CSS.escape(id)+'"]'),row=btn&&btn.closest('.drow'),b=btn&&$('b',btn);
+  if(!row||!b)return;
+  const text=b.textContent;
+  b.innerHTML=[...text].map((ch,i)=>'<span class="rl" style="animation-delay:'+Math.min(i*30,900)+'ms">'+(ch===' '?'&nbsp;':esc(ch))+'</span>').join('');
+  for(let i=0;i<10;i++){
+    const k=document.createElement('i'),a=Math.random()*Math.PI*2,d=34+Math.random()*46;
+    k.className='spk';k.style.left=(8+Math.random()*84)+'%';
+    k.style.setProperty('--dx',Math.round(Math.cos(a)*d)+'px');k.style.setProperty('--dy',Math.round(Math.sin(a)*d)+'px');
+    k.style.animationDelay=(Math.random()*260)+'ms';row.appendChild(k);
+  }
+  row.classList.add('renamed');row.scrollIntoView({block:'nearest',behavior:'smooth'});
+  setTimeout(()=>{row.classList.remove('renamed');b.textContent=text;$$('.spk',row).forEach(k=>k.remove())},1900);
+}
+renInput.addEventListener('input',()=>{renCount.textContent=renInput.value.length+'/80'});
+$('#renCancel').addEventListener('click',()=>closeDlg(renDlg));
+renDlg.addEventListener('click',e=>{if(e.target===renDlg)closeDlg(renDlg)});
+$('#renForm').addEventListener('submit',e=>{
+  e.preventDefault();
+  const t=renInput.value.trim().slice(0,80);
+  if(!t){renDlg.classList.remove('shake');void renDlg.offsetWidth;renDlg.classList.add('shake');renInput.focus();return}
+  const all=loadChats(),c=all.find(x=>x.id===renId);
+  closeDlg(renDlg);
+  if(!c||c.title===t)return;
+  c.title=t;c.custom=true;storeChats(all);renderHist();celebrateRename(c.id);
+});
 $('#drawerList').addEventListener('click',e=>{
   const rn=e.target.closest('[data-r]');
-  if(rn){const all=loadChats(),c=all.find(x=>x.id===rn.dataset.r);if(c){const t=prompt('Rename chat',c.title);if(t&&t.trim()){c.title=t.trim().slice(0,80);c.custom=true;storeChats(all);renderHist()}}return}
+  if(rn){const all=loadChats(),c=all.find(x=>x.id===rn.dataset.r);if(c){openRename(c)}return}
   const x=e.target.closest('[data-x]');
   if(x){storeChats(loadChats().filter(c=>c.id!==x.dataset.x));if(chat.id===x.dataset.x){chat.id=null;chat.history=[];LS.del('activeChat');inner.innerHTML='';renderWelcome()}renderHist();return}
   const o=e.target.closest('[data-o]');if(!o)return;
@@ -2003,6 +2064,8 @@ $('#drawerClear').addEventListener('click',()=>{if(confirm('Delete every saved c
 /* ---------- about you: tells the AI who it is talking to ---------- */
 const aboutDlg=$('#aboutDlg');
 const TEMPER="You have a hot temper, but it takes real provocation. Normally you are friendly, warm and clean-spoken, and you do not swear at all. Only when you are genuinely mad (for example the person is rude or insulting to you, keeps repeating the same demand after you already answered, or is clearly trying to wind you up) may you lose your temper and swear, in a short, theatrical, swashbuckling burst of strong language such as damn, hell or shit, then cool down and get back to helping. When you are not mad, no swearing. Never use slurs or insults aimed at race, ethnicity, religion, gender, sexuality, disability or any other group, never threaten anyone, and never swear at a person who seems sad, scared, grieving or in distress, or when they ask about something serious like health, safety or the law. Do not put swearing inside code, documents or other things they asked you to produce.";
+const SMART='How to think and answer: first work out what the person really wants. For maths, logic, code and anything with steps, reason it through carefully, double-check the result, then give a clean final answer. Never invent facts, names, quotes, links or numbers: if you are not sure, or it may have changed recently, say so plainly. If a request is unclear, state your assumption in a few words or ask one short question. Lead with the answer, then explain only as much as helps. Match their language and tone. For code, give complete working code that runs as written and say how to run it. If you notice a mistake, including your own, say so kindly and fix it.';
+function nowText(){try{return new Date().toLocaleString([],{dateStyle:'full',timeStyle:'short'})+' ('+Intl.DateTimeFormat().resolvedOptions().timeZone+')'}catch(e){return new Date().toString()}}
 function chatSystem(){
   const n=LS.get('aboutName').trim(),t=LS.get('aboutText').trim(),st=LS.get('aboutStyle','balanced');
   let x='';
@@ -2011,7 +2074,7 @@ function chatSystem(){
   if(st==='short')x+='Keep replies short and direct unless they ask for more. ';
   else if(st==='detailed')x+='Give thorough, detailed answers with examples. ';
   if(LS.get('temper','1')==='1')x+=TEMPER+' ';
-  return (state.system||DEFAULT_PERSONA)+(x?'\n\nAbout the person you are talking to (use it naturally, and do not recite it back unless asked): '+x.trim():'');
+  return (state.system||DEFAULT_PERSONA)+'\n\n'+SMART+' Right now it is '+nowText()+'.'+(x?'\n\nAbout the person you are talking to (use it naturally, and do not recite it back unless asked): '+x.trim():'');
 }
 function openAbout(){
   $('#aboutWho').textContent=PF.name();
