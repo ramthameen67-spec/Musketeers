@@ -946,18 +946,21 @@ async function streamGemini({model,contents,system,signal,onText}){
 async function generateImage({model,prompt,aspect,refs,signal}){
   const parts=[{text:prompt}];
   (refs||[]).forEach(r=>parts.push({inlineData:{mimeType:r.mime,data:r.data}}));
-  async function call(withConfig){
-    const gc={responseModalities:['TEXT','IMAGE']};
+  async function call(withConfig,mods){
+    const gc={responseModalities:mods};
     if(withConfig&&aspect)gc.imageConfig={aspectRatio:aspect};
     let res;
     try{
       res=await fetch(API+'/models/'+encodeURIComponent(model)+':generateContent',{method:'POST',signal,headers:{'Content-Type':'application/json','x-goog-api-key':state.key},body:JSON.stringify({contents:[{role:'user',parts}],generationConfig:gc})});
     }catch(e){throw netError(e)}
-    if(!res.ok){const err=await apiError(res);if(withConfig&&res.status===400&&/imageconfig|aspect/i.test(err.message))return null;throw err}
+    if(!res.ok){const err=await apiError(res);if(res.status===400&&/modalit/i.test(err.message))return 'MOD';if(withConfig&&res.status===400&&/imageconfig|aspect/i.test(err.message))return null;throw err}
     return res.json();
   }
-  let obj=await call(true);
-  if(obj===null)obj=await call(false);
+  let obj=await call(true,['TEXT','IMAGE']);
+  if(obj==='MOD')obj=await call(true,['IMAGE']);
+  if(obj===null)obj=await call(false,['TEXT','IMAGE']);
+  if(obj==='MOD')obj=await call(false,['IMAGE']);
+  if(typeof obj==='string'||obj===null)throw new Error('This image model rejected the request settings. Pick another image model.');
   const br=blockedReason(obj);if(br)throw new Error(br);
   const cand=obj.candidates&&obj.candidates[0];
   const out={images:[],text:''};
@@ -1241,14 +1244,45 @@ $('#newChat').addEventListener('click',()=>{
 });
 const IMG_RULE='You can make images right inside this chat. When the person asks you to draw, create, generate, design, edit or show a picture, image, logo, wallpaper, poster, sprite, avatar, art or photo, reply with ONE short friendly line, then on its own line write [[IMAGE: a vivid, detailed description of the image: subject, style, colours, lighting, composition]]. If they attached an image and want it changed, describe the full change. Never say you cannot make images and never fake it with ASCII art or SVG. Use that line for nothing else.';
 const IMG_RE=/\[\[IMAGE:([\s\S]*?)\]\]/i,hideImg=t=>t.replace(/\[\[IMAGE:[\s\S]*?(\]\]|$)/gi,''),keepImg=t=>t.replace(/\[\[IMAGE:([\s\S]*?)\]\]/gi,'[Image generated: $1]');
+const IMG_FALLBACK=['gemini-3.1-flash-image','gemini-2.5-flash-image','gemini-3-pro-image-preview','gemini-3-pro-image'];
+async function generateImageSmart(o){
+  const cand=[o.model].concat((state.iList||[]).map(m=>m[0]),IMG_FALLBACK).filter((m,i,a)=>m&&a.indexOf(m)===i).slice(0,5);let last;
+  for(const m of cand){
+    try{
+      const r=await generateImage(Object.assign({},o,{model:m}));
+      if(m!==o.model){state.imgModel=m;LS.set('imgModel',m);try{renderPickers()}catch(e){}toast('Image model switched to '+m+' because the first one did not work')}
+      r.model=m;return r;
+    }catch(e){
+      last=e;if(e.name==='AbortError')throw e;
+      const skip=e.status===404||e.status===403||(e.status===400&&/not (found|supported)|unsupported|does not support|rejected the request/i.test(e.message));
+      if(!skip)break;
+    }
+  }
+  if(last&&last.status===429)last.message+=' Tip: Gemini image models often have no free quota. Turn on billing for your key in Google AI Studio, or wait a minute and try again.';
+  throw last;
+}
+function paintBox(md$,keep){
+  const box=document.createElement('div');box.className='painting';const sp=document.createElement('span'),t0=Date.now();
+  box.innerHTML='<span class="bar"></span>';box.append(sp);if(!keep)md$.innerHTML='';md$.append(box);
+  const tick=()=>{sp.textContent='Painting with '+state.imgModel+'… '+Math.round((Date.now()-t0)/1000)+'s'};tick();const iv=setInterval(tick,1000);toEnd();
+  return{stop(){clearInterval(iv);box.remove()}};
+}
+function showImgs(md$,r,alt){
+  r.images.forEach(im=>{generated.push(im);const n=generated.length-1,fig=document.createElement('figure');fig.className='genimg';
+    fig.innerHTML='<img alt="'+esc(alt.slice(0,120))+'" src="data:'+im.mime+';base64,'+im.data+'"><div class="acts"><button type="button" class="btn ghost small" data-dl="'+n+'">Download</button><button type="button" class="btn ghost small" data-use="'+n+'">Edit this image</button></div>'+(r.text?'<figcaption>'+esc(r.text.slice(0,300))+'</figcaption>':'');md$.append(fig)});
+  toEnd();
+}
+const IMG_NOUNRE=/\b(images?|pictures?|pics?|photos?|logos?|posters?|wallpapers?|drawings?|illustrations?|portraits?|icons?|avatars?|artworks?|paintings?|banners?|memes?|thumbnails?|sprites?|mockups?|cover art)\b/i;
+function imgIntent(text,atts){
+  if(!text||text.length>400||atts.some(a=>a.kind!=='image'))return false;
+  const pre='^\\s*(?:(?:please|pls|hey|yo|ok|okay|can you|could you|would you|will you|i want you to|i need you to|i want|i need)[,\\s]+)*';
+  if(new RegExp(pre+'(draw|paint|sketch|illustrate|imagine)\\b(?!\\s+(up|on|from|out|attention|conclusions?)\\b)','i').test(text))return true;
+  return new RegExp(pre+'(generate|create|make|design|render|produce|show me|give me)\\b','i').test(text)&&IMG_NOUNRE.test(text)&&!/\b(how|why|what|explain|story|essay|code|script|function|program|app|website|game|prompt|caption|name|ideas?|list|steps?|tutorial|guide|plan)\b/i.test(text);
+}
 async function inlineImage(md$,acc,refs,signal){
-  const m=acc.match(IMG_RE);if(!m||!m[1].trim())return;const prompt=m[1].trim();
-  const box=document.createElement('div');box.className='painting';box.innerHTML='<span class="bar"></span><span>Painting with '+esc(state.imgModel)+'</span>';md$.append(box);toEnd();
-  try{
-    const r=await generateImage({model:state.imgModel,prompt,aspect:$('#aspectSel').value,refs,signal});box.remove();
-    r.images.forEach(im=>{generated.push(im);const n=generated.length-1,fig=document.createElement('figure');fig.className='genimg';
-      fig.innerHTML='<img alt="'+esc(prompt.slice(0,120))+'" src="data:'+im.mime+';base64,'+im.data+'"><div class="acts"><button type="button" class="btn ghost small" data-dl="'+n+'">Download</button><button type="button" class="btn ghost small" data-use="'+n+'">Edit this image</button></div>';md$.append(fig)});
-  }catch(e){box.remove();if(e.name==='AbortError'){md$.insertAdjacentHTML('beforeend','<div class="muted">Stopped.</div>')}else md$.insertAdjacentHTML('beforeend','<div class="err" style="margin-top:12px">Couldn’t make the image: '+esc(e.message)+'</div>')}
+  const m=acc.match(IMG_RE);if(!m||!m[1].trim())return;const prompt=m[1].trim(),pb=paintBox(md$,true);
+  try{const r=await generateImageSmart({model:state.imgModel,prompt,aspect:$('#aspectSel').value,refs,signal});pb.stop();showImgs(md$,r,prompt)}
+  catch(e){pb.stop();md$.insertAdjacentHTML('beforeend',e.name==='AbortError'?'<div class="muted">Stopped.</div>':'<div class="err" style="margin-top:12px">Couldn’t make the image: '+esc(e.message)+'</div>')}
   toEnd();
 }
 $('#chatForm').addEventListener('submit',async e=>{
@@ -1271,7 +1305,7 @@ $('#chatForm').addEventListener('submit',async e=>{
     if(mode==='image'){
       md$.innerHTML='<div class="painting"><span class="bar"></span><span>Painting with '+esc(state.imgModel)+'</span></div>';
       if(atts.some(a=>a.kind!=='image'))toast('Image mode uses only the attached photos');
-      const r=await generateImage({model:state.imgModel,prompt:text,aspect:$('#aspectSel').value,refs:atts.filter(a=>a.kind==='image'),signal:chat.ctrl.signal});
+      const r=await generateImageSmart({model:state.imgModel,prompt:text,aspect:$('#aspectSel').value,refs:atts.filter(a=>a.kind==='image'),signal:chat.ctrl.signal});
       md$.innerHTML='';
       r.images.forEach(im=>{
         generated.push(im);const n=generated.length-1;
@@ -1279,6 +1313,13 @@ $('#chatForm').addEventListener('submit',async e=>{
         fig.innerHTML='<img alt="'+esc(text.slice(0,120))+'" src="data:'+im.mime+';base64,'+im.data+'"><div class="acts"><button type="button" class="btn ghost small" data-dl="'+n+'">Download</button><button type="button" class="btn ghost small" data-use="'+n+'">Edit this image</button></div>'+(r.text?'<figcaption>'+esc(r.text)+'</figcaption>':'');
         md$.append(fig);
       });
+    }else if(imgIntent(text,atts)){
+      const pb=paintBox(md$);chat.history.push({role:'user',parts:[{text}]});
+      try{
+        const r=await generateImageSmart({model:state.imgModel,prompt:text,aspect:$('#aspectSel').value,refs:atts.filter(a=>a.kind==='image'),signal:chat.ctrl.signal});
+        pb.stop();md$.innerHTML='';showImgs(md$,r,text);
+        chat.history.push({role:'model',parts:[{text:'[Image generated: '+text.slice(0,300)+']'}]});saveChat();addActions(bm,'(image)');
+      }catch(err){pb.stop();chat.history.pop();if(err.name==='AbortError')md$.innerHTML='<span class="muted">Stopped.</span>';throw err}
     }else{
       const parts=buildParts(text||'Look at the attached file(s) and tell me what is in them.',atts);
       chat.history.push({role:'user',parts});
@@ -1964,9 +2005,10 @@ $('#callForm').addEventListener('submit',async e=>{
 $$('[data-logo]').forEach(i=>{i.src=LOGO});
 const fav=document.createElement('link');fav.rel='icon';fav.href=LOGO;document.head.append(fav);
 /* ---------- profiles ---------- */
-const VERSION='2.5';
+const VERSION='2.6';
 const CHANGELOG=[
-  {v:'2.5',d:'Latest',items:['Make images right in the chat: just ask, like “draw a neon dragon” or “make me a logo”. No need to switch to Image mode. Attach a photo and say what to change to edit it. Every picture has Download and Edit buttons.']},
+  {v:'2.6',d:'Latest',items:['Images are far more reliable: say “draw…”, “make a logo…” or “generate a picture of…” and Musketeers paints it straight away. If an image model is not available on your key it automatically tries the next one and remembers what worked.','A live timer shows while it paints, and image errors now say exactly what to fix.']},
+  {v:'2.5',d:'Earlier',items:['Make images right in the chat: just ask, like “draw a neon dragon” or “make me a logo”. No need to switch to Image mode. Attach a photo and say what to change to edit it. Every picture has Download and Edit buttons.']},
   {v:'2.4',d:'Earlier',items:['Cleaner three-line menu: it now only shows your chats, with Settings at the top. About you, Export this chat and Delete all chats moved into Settings.','Smarter answers: Musketeers plans before replying, double-checks maths and code, asks one short question only when it really needs to, and tells you when it is unsure instead of guessing.','Cooler look: glowing aurora background, shimmering logo, glassy header, menus and dialogs, smooth message animations and neon hover effects.']},
   {v:'2.3',d:'Earlier',items:['Musketeers now has a temper: he can swear, but only when he is really mad. Turn it off any time in Settings under Personality.']},
   {v:'2.2',d:'Earlier',items:['Every reply has Copy, Listen and Regenerate buttons.','Search your chats, rename them, and export any chat as a Markdown file.','Backup and restore: download everything to a file and load it back, even on another phone.','Chat text size slider in Settings, and a personal welcome when you have set your name.']},
