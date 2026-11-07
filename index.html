@@ -389,7 +389,7 @@ dialog input[type=range]{width:100%;accent-color:var(--mode)}
 .drawer .dfoot{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line);padding-top:12px}
 .drawer .dfoot .btn{width:100%}
 .drawer .who{color:var(--muted);font-size:12px;margin:0 0 8px}
-.drawer .empty{color:var(--muted);font-size:13px}
+.drawer .empty{position:static;inset:auto;display:block;text-align:left;padding:14px 4px;color:var(--muted);font-size:13px}
 
 .macts{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .macts button{background:none;border:1px solid var(--line);border-radius:999px;padding:4px 11px;font-size:12px;color:var(--muted)}
@@ -399,6 +399,31 @@ dialog input[type=range]{width:100%;accent-color:var(--mode)}
 .dsearch{width:100%;margin:0 0 10px}
 .drow .mini{padding:4px 8px;min-width:0}
 .hint{font-size:12px;color:var(--muted);margin:-4px 0 10px}
+/* ---------- 2.4 glow-up ---------- */
+body::before{content:"";position:fixed;inset:-20%;z-index:-1;pointer-events:none;background:radial-gradient(40% 35% at 18% 12%,color-mix(in srgb,var(--violet) 24%,transparent),transparent 70%),radial-gradient(35% 30% at 85% 20%,color-mix(in srgb,var(--crimson) 17%,transparent),transparent 70%),radial-gradient(40% 35% at 60% 95%,color-mix(in srgb,var(--gold) 13%,transparent),transparent 70%);animation:aur 22s ease-in-out infinite alternate}
+@keyframes aur{to{transform:translate3d(3%,2%,0) scale(1.08) rotate(2deg)}}
+*{scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--mode) 55%,#2a2236) transparent}
+.top{background:linear-gradient(180deg,color-mix(in srgb,var(--mode) 20%,rgba(7,5,12,.72)),rgba(7,5,12,.55));-webkit-backdrop-filter:blur(14px) saturate(1.3);backdrop-filter:blur(14px) saturate(1.3)}
+.composer{background:rgba(7,5,12,.66);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+.wordmark{background-image:linear-gradient(90deg,var(--violet),var(--crimson),var(--gold),var(--crimson),var(--violet));background-size:200% 100%;animation:shim 7s linear infinite}
+@keyframes shim{to{background-position:200% 0}}
+.logo{box-shadow:0 0 0 1px var(--line),0 0 22px -4px var(--mode);transition:box-shadow .3s}
+.tab{transition:color .2s,border-color .2s,transform .15s}.tab:hover{transform:translateY(-1px)}
+.msg{animation:msgpop .35s cubic-bezier(.2,.9,.3,1.15)}
+@keyframes msgpop{from{opacity:0;transform:translateY(10px) scale(.98)}}
+.msg.user .bubble{background:linear-gradient(135deg,color-mix(in srgb,var(--mode) 34%,var(--panel-2)),var(--panel-2));border-color:color-mix(in srgb,var(--mode) 48%,var(--line));box-shadow:0 8px 24px -12px var(--mode)}
+.btn{transition:filter .15s,transform .12s,box-shadow .2s,border-color .2s}
+.btn:not(.ghost):hover{box-shadow:0 8px 26px -8px var(--mode)}
+.btn.ghost:hover{box-shadow:0 0 0 1px var(--mode),0 8px 24px -12px var(--mode)}
+.btn.sendbtn,.btn.callbtn{box-shadow:0 0 22px -4px var(--mode)}
+.ibtn{transition:transform .15s,color .2s,filter .2s}.ibtn:hover{transform:translateY(-1px);filter:drop-shadow(0 0 8px var(--mode))}
+.nb{box-shadow:0 0 0 0 color-mix(in srgb,var(--mode) 70%,transparent);animation:nbp 1.6s ease-out infinite}
+@keyframes nbp{to{box-shadow:0 0 0 9px transparent}}
+.drawer{background:rgba(15,11,23,.84);-webkit-backdrop-filter:blur(18px) saturate(1.2);backdrop-filter:blur(18px) saturate(1.2);box-shadow:0 0 70px -24px var(--mode)}
+dialog{border:1px solid color-mix(in srgb,var(--mode) 42%,var(--line));box-shadow:0 30px 90px -20px #000,0 0 60px -22px var(--mode);animation:dpop .22s cubic-bezier(.2,.9,.3,1.1)}
+dialog::backdrop{background:rgba(5,3,10,.62);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+@keyframes dpop{from{opacity:0;transform:translateY(12px) scale(.97)}}
+@media (prefers-reduced-motion:reduce){body::before,.wordmark,.msg,dialog,.nb{animation:none!important}}
 </style>
 </head>
 <body data-mode="chat">
@@ -530,17 +555,11 @@ dialog input[type=range]{width:100%;accent-color:var(--mode)}
 </dialog>
 <div class="dscrim" id="dscrim"></div>
 <aside class="drawer" id="drawer" aria-label="Chats" aria-hidden="true">
-  <div class="dtop"><h2>Chats</h2><button type="button" class="btn ghost small" id="drawerClose" aria-label="Close menu">Close</button></div>
+  <div class="dtop"><h2>Chats</h2><button type="button" class="btn ghost small" id="drawerSet">⚙ Settings</button><button type="button" class="btn ghost small" id="drawerClose" aria-label="Close menu">Close</button></div>
   <p class="who" id="drawerWho"></p>
   <button type="button" class="btn dnew" id="drawerNew">+ New chat</button>
   <input class="dsearch" id="drawerSearch" type="search" placeholder="Search chats (Ctrl+K)" autocomplete="off" aria-label="Search chats">
   <div class="dlist" id="drawerList"></div>
-  <div class="dfoot">
-    <button type="button" class="btn ghost small" id="aboutBtn">About you</button>
-    <button type="button" class="btn ghost small" id="exportChat">Export this chat</button>
-    <button type="button" class="btn ghost small" id="drawerSet">Settings</button>
-    <button type="button" class="btn ghost small" id="drawerClear">Delete all chats</button>
-  </div>
 </aside>
 <dialog id="aboutDlg">
   <form id="aboutForm">
@@ -573,6 +592,8 @@ dialog input[type=range]{width:100%;accent-color:var(--mode)}
   <p class="hint">He stays friendly and clean-spoken until something genuinely winds him up, like rude messages or being asked the same thing over and over. No slurs or hate, and he stays kind if you seem upset.</p>
   <div class="sechead">Chat text size</div>
   <label for="sizeRng"><span id="sizeVal"></span><input id="sizeRng" type="range" min="0.85" max="1.4" step="0.05"></label>
+  <div class="sechead">Your chats</div>
+  <div class="dlg-actions" style="margin:0 0 10px"><button type="button" class="btn ghost small" id="aboutBtn">About you</button><button type="button" class="btn ghost small" id="exportChat">Export this chat</button><button type="button" class="btn ghost small" id="drawerClear">Delete all chats</button></div>
   <div class="sechead">Backup</div>
   <p class="hint">Saves every profile, chat, game and setting on this device to a file you can restore later or move to another phone. Your Gemini key is not included.</p>
   <div class="dlg-actions" style="margin:0 0 10px"><button type="button" class="btn ghost small" id="bkExport">Download backup</button><button type="button" class="btn ghost small" id="bkImport">Restore from file</button><input type="file" id="bkFile" accept=".json,application/json" hidden></div>
@@ -1929,9 +1950,10 @@ $('#callForm').addEventListener('submit',async e=>{
 $$('[data-logo]').forEach(i=>{i.src=LOGO});
 const fav=document.createElement('link');fav.rel='icon';fav.href=LOGO;document.head.append(fav);
 /* ---------- profiles ---------- */
-const VERSION='2.3';
+const VERSION='2.4';
 const CHANGELOG=[
-  {v:'2.3',d:'Latest',items:['Musketeers now has a temper: he can swear, but only when he is really mad. Turn it off any time in Settings under Personality.']},
+  {v:'2.4',d:'Latest',items:['Cleaner three-line menu: it now only shows your chats, with Settings at the top. About you, Export this chat and Delete all chats moved into Settings.','Smarter answers: Musketeers plans before replying, double-checks maths and code, asks one short question only when it really needs to, and tells you when it is unsure instead of guessing.','Cooler look: glowing aurora background, shimmering logo, glassy header, menus and dialogs, smooth message animations and neon hover effects.']},
+  {v:'2.3',d:'Earlier',items:['Musketeers now has a temper: he can swear, but only when he is really mad. Turn it off any time in Settings under Personality.']},
   {v:'2.2',d:'Earlier',items:['Every reply has Copy, Listen and Regenerate buttons.','Search your chats, rename them, and export any chat as a Markdown file.','Backup and restore: download everything to a file and load it back, even on another phone.','Chat text size slider in Settings, and a personal welcome when you have set your name.']},
   {v:'2.1',d:'Earlier',items:['Three-line menu on the left with all your saved chats.','About you: tell Musketeers your name, background and how you like answers, and it replies with that in mind.']},
   {v:'2.0',d:'Earlier',items:['Sign in with a profile: chats, games and voice settings stay separate for each person on this device.','Saved chats: every conversation is kept, and History lets you reopen or delete them.','Settings: pick the call voice, choose a speech voice, set speed and pitch, and turn on read-aloud for replies.','This What\'s new panel, with a dot when there is something you have not seen.']},
@@ -2017,7 +2039,7 @@ dscrim.addEventListener('click',closeDrawer);
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&drawer.classList.contains('open'))closeDrawer()});
 $('#drawerNew').addEventListener('click',()=>{$('#newChat').click();setTab('chat');closeDrawer()});
 $('#drawerSet').addEventListener('click',()=>{closeDrawer();openSettings()});
-$('#aboutBtn').addEventListener('click',()=>{closeDrawer();openAbout()});
+$('#aboutBtn').addEventListener('click',()=>{closeDrawer();closeDlg($('#setDlg'));openAbout()});
 const renDlg=$('#renDlg'),renInput=$('#renInput'),renCount=$('#renCount');let renId=null;
 function openRename(c){
   renId=c.id;renInput.value=c.title;renCount.textContent=c.title.length+'/80';
@@ -2064,7 +2086,7 @@ $('#drawerClear').addEventListener('click',()=>{if(confirm('Delete every saved c
 /* ---------- about you: tells the AI who it is talking to ---------- */
 const aboutDlg=$('#aboutDlg');
 const TEMPER="You have a hot temper, but it takes real provocation. Normally you are friendly, warm and clean-spoken, and you do not swear at all. Only when you are genuinely mad (for example the person is rude or insulting to you, keeps repeating the same demand after you already answered, or is clearly trying to wind you up) may you lose your temper and swear, in a short, theatrical, swashbuckling burst of strong language such as damn, hell or shit, then cool down and get back to helping. When you are not mad, no swearing. Never use slurs or insults aimed at race, ethnicity, religion, gender, sexuality, disability or any other group, never threaten anyone, and never swear at a person who seems sad, scared, grieving or in distress, or when they ask about something serious like health, safety or the law. Do not put swearing inside code, documents or other things they asked you to produce.";
-const SMART='How to think and answer: first work out what the person really wants. For maths, logic, code and anything with steps, reason it through carefully, double-check the result, then give a clean final answer. Never invent facts, names, quotes, links or numbers: if you are not sure, or it may have changed recently, say so plainly. If a request is unclear, state your assumption in a few words or ask one short question. Lead with the answer, then explain only as much as helps. Match their language and tone. For code, give complete working code that runs as written and say how to run it. If you notice a mistake, including your own, say so kindly and fix it.';
+const SMART='How to think and answer: work out what the person really wants and what would make the answer genuinely useful before you write. For maths, logic, planning, debugging and anything with steps, think it through step by step, double-check the result, then give a clean final answer and show key steps only when they help. Never invent facts, names, quotes, links, sources or numbers; if you are not sure, or it may have changed recently, say so plainly and say what you would check. If a request is ambiguous, pick the most likely meaning and state that assumption in a few words, or ask ONE short question when a wrong guess would waste their time. Lead with the answer, then add only the context that helps. Use short paragraphs; use lists, tables or headings only when they make things clearer, and code blocks for code. Be concrete: give examples, numbers and next steps instead of vague advice. Offer one smart follow-up or better option when it clearly helps, never a pile of them. Match their language, tone and energy, and be warm and a little witty without padding. For code, give complete working code that runs as written, say how to run it, and handle edge cases and errors. When they share an image or file, read it carefully and point to specific details. Push back politely when you think they are mistaken, and if you notice a mistake of your own, say so and fix it.';
 function nowText(){try{return new Date().toLocaleString([],{dateStyle:'full',timeStyle:'short'})+' ('+Intl.DateTimeFormat().resolvedOptions().timeZone+')'}catch(e){return new Date().toString()}}
 function chatSystem(){
   const n=LS.get('aboutName').trim(),t=LS.get('aboutText').trim(),st=LS.get('aboutStyle','balanced');
