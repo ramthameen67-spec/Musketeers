@@ -590,21 +590,25 @@ dialog::backdrop{background:rgba(5,3,10,.62);-webkit-backdrop-filter:blur(6px);b
   <div class="sechead">Personality</div>
   <label class="check" for="temperChk"><input type="checkbox" id="temperChk"> Musketeers can swear, but only when he is really mad</label>
   <p class="hint">He stays friendly and clean-spoken until something genuinely winds him up, like rude messages or being asked the same thing over and over. No slurs or hate, and he stays kind if you seem upset.</p>
+  <div class="sechead">Images</div>
+  <label class="check" for="freeImgChk"><input type="checkbox" id="freeImgChk"> Use a free backup image maker when my Gemini key has no image quota</label>
+  <p class="hint">The backup is Pollinations (pollinations.ai). Your picture description is sent there instead of Google. Pictures may carry a small watermark and it allows about one picture every 15 seconds.</p>
   <div class="sechead">Chat text size</div>
   <label for="sizeRng"><span id="sizeVal"></span><input id="sizeRng" type="range" min="0.85" max="1.4" step="0.05"></label>
   <div class="sechead">Your chats</div>
   <div class="dlg-actions" style="margin:0 0 10px"><button type="button" class="btn ghost small" id="aboutBtn">About you</button><button type="button" class="btn ghost small" id="exportChat">Export this chat</button><button type="button" class="btn ghost small" id="drawerClear">Delete all chats</button></div>
   <div class="sechead">Backup</div>
-  <p class="hint">Saves every profile, chat, game and setting on this device to a file you can restore later or move to another phone. Your Gemini key is not included.</p>
+  <p class="hint">Saves every profile, chat, game and setting on this device to a file you can restore later or move to another phone. Your Gemini keys are not included.</p>
   <div class="dlg-actions" style="margin:0 0 10px"><button type="button" class="btn ghost small" id="bkExport">Download backup</button><button type="button" class="btn ghost small" id="bkImport">Restore from file</button><input type="file" id="bkFile" accept=".json,application/json" hidden></div>
   <div class="dlg-actions"><button type="button" class="btn ghost small" id="voicePrev">Preview voice</button><button type="button" class="btn ghost small" id="setKey">Key and models</button><span class="grow"></span><button type="button" class="btn" id="setClose">Done</button></div>
 </dialog>
 <dialog id="keyDlg">
   <form id="keyForm">
-    <h2>Gemini key</h2>
-    <p class="muted">Musketeers talks to Google's Gemini API straight from this page. Your key stays in this browser and goes only to Google. <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Get a key in Google AI Studio</a>.</p>
-    <label for="keyInput">API key<input id="keyInput" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your key"></label>
-    <label class="check" for="keyShow"><input type="checkbox" id="keyShow"> Show key</label>
+    <h2>Gemini keys</h2>
+    <p class="muted">Musketeers talks to Google's Gemini API straight from this page. Your keys stay in this browser and go only to Google. Add a second key as a backup: if the first one hits its quota or stops working, Musketeers switches to the second automatically. <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Get a key in Google AI Studio</a>.</p>
+    <label for="keyInput">API key 1<input id="keyInput" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your key"></label>
+    <label for="keyInput2">API key 2 (optional backup)<input id="keyInput2" type="password" autocomplete="off" spellcheck="false" placeholder="Paste a second key"></label>
+    <label class="check" for="keyShow"><input type="checkbox" id="keyShow"> Show keys</label>
     <details>
       <summary>Advanced</summary>
       <label for="customText">Custom chat model ID<input id="customText" type="text" autocomplete="off" spellcheck="false" placeholder="Use when Google ships a newer version"></label>
@@ -613,8 +617,8 @@ dialog::backdrop{background:rgba(5,3,10,.62);-webkit-backdrop-filter:blur(6px);b
     </details>
     <p class="status" id="keyStatus" role="status"></p>
     <div class="dlg-actions">
-      <button type="button" class="btn ghost small" id="keySync">Sync versions from my key</button>
-      <button type="button" class="btn ghost small" id="keyClear">Remove key</button>
+      <button type="button" class="btn ghost small" id="keySync">Sync versions from my keys</button>
+      <button type="button" class="btn ghost small" id="keyClear">Remove keys</button>
       <span class="grow"></span>
       <button type="button" class="btn ghost" id="keyClose">Close</button>
       <button type="submit" class="btn">Save</button>
@@ -702,6 +706,7 @@ const IMAGE_MODELS=[
 const DEFAULT_PERSONA='You are Musketeers, a sharp and friendly AI assistant. Be accurate, clear and concise, and use Markdown when it helps. A touch of swashbuckling flair is welcome, but never at the cost of clarity.';
 const state={
   key:LS.get('key'),
+  key2:LS.get('key2'),
   model:LS.get('model','gemini-3.7-flash'),
   imgModel:LS.get('imgModel','gemini-3.1-flash-image'),
   customText:LS.get('customText'),
@@ -826,7 +831,7 @@ async function syncModels(){
   if(!state.key)throw new Error('Add a key first.');
   let all=[],token='';
   for(let i=0;i<4;i++){
-    const res=await fetch(API+'/models?pageSize=200'+(token?'&pageToken='+encodeURIComponent(token):''),{headers:{'x-goog-api-key':state.key}});
+    const res=await gfetch(API+'/models?pageSize=200'+(token?'&pageToken='+encodeURIComponent(token):''),{});
     if(!res.ok)throw await apiError(res);
     const j=await res.json();
     all=all.concat(j.models||[]);token=j.nextPageToken||'';
@@ -848,23 +853,50 @@ async function syncModels(){
   return {t:txt.length,i:imgs.length};
 }
 
+/* ---------- two-key failover ---------- */
+/* Key 1 is used first. If Google answers 429 (quota), 401/403 or "API key not valid", the same request is retried with key 2,
+   and key 2 stays active for the rest of the session until it fails too. */
+let keyPick=0;
+async function keyFailed(res){
+  if(res.status===429||res.status===401||res.status===403)return true;
+  if(res.status===400){try{const j=await res.clone().json();return /api key/i.test((j.error&&j.error.message)||'')}catch(e){}}
+  return false;
+}
+async function gfetch(url,opts){
+  opts=opts||{};
+  const send=k=>fetch(url,Object.assign({},opts,{headers:Object.assign({},opts.headers,{'x-goog-api-key':k})}));
+  if(!state.key2)return send(state.key);
+  let res;
+  for(let n=0;n<2;n++){
+    const i=(keyPick+n)%2;
+    res=await send(i?state.key2:state.key);
+    if(res.ok){if(n){keyPick=i;toast('Switched to key '+(i+1))}return res}
+    if(!(await keyFailed(res)))return res;
+  }
+  return res;
+}
+
 /* ---------- key dialog ---------- */
 const keyDlg=$('#keyDlg');
 function updateKeyUI(){
   $('#keyDot').classList.toggle('on',!!state.key);
-  $('#keyLabel').textContent=state.key?'Key saved':'Add key';
+  $('#keyLabel').textContent=state.key?(state.key2?'2 keys saved':'Key saved'):'Add key';
 }
 function openKey(){
-  $('#keyInput').value=state.key;$('#keyInput').type='password';$('#keyShow').checked=false;
+  $('#keyInput').value=state.key;$('#keyInput2').value=state.key2;$('#keyInput').type='password';$('#keyInput2').type='password';$('#keyShow').checked=false;
   $('#customText').value=state.customText;$('#customImage').value=state.customImage;
   $('#systemInput').value=state.system;$('#keyStatus').textContent='';
   if(typeof keyDlg.showModal==='function')keyDlg.showModal();else keyDlg.setAttribute('open','');
 }
 function closeKey(){if(keyDlg.close)keyDlg.close();else keyDlg.removeAttribute('open')}
 function saveSettings(){
-  const k=$('#keyInput').value.trim();
+  let k=$('#keyInput').value.trim(),k2=$('#keyInput2').value.trim();
+  if(!k&&k2){k=k2;k2=''}
+  if(k2===k)k2='';
   const changed=k!==state.key;
   state.key=k;LS.set('key',k);
+  state.key2=k2;if(k2)LS.set('key2',k2);else LS.del('key2');
+  keyPick=0;
   state.customText=$('#customText').value.trim();LS.set('customText',state.customText);
   state.customImage=$('#customImage').value.trim();LS.set('customImage',state.customImage);
   state.system=$('#systemInput').value.trim()||DEFAULT_PERSONA;LS.set('system',state.system);
@@ -873,15 +905,17 @@ function saveSettings(){
 }
 $('#keyBtn').addEventListener('click',openKey);
 $('#keyClose').addEventListener('click',closeKey);
-$('#keyShow').addEventListener('change',e=>{$('#keyInput').type=e.target.checked?'text':'password'});
+$('#keyShow').addEventListener('change',e=>{const t=e.target.checked?'text':'password';$('#keyInput').type=t;$('#keyInput2').type=t});
 $('#keyForm').addEventListener('submit',e=>{e.preventDefault();saveSettings();closeKey();toast('Saved')});
-$('#keyClear').addEventListener('click',()=>{state.key='';LS.del('key');$('#keyInput').value='';updateKeyUI();renderWelcome();$('#keyStatus').textContent='Key removed from this browser.'});
+$('#keyClear').addEventListener('click',()=>{state.key='';state.key2='';keyPick=0;LS.del('key');LS.del('key2');$('#keyInput').value='';$('#keyInput2').value='';updateKeyUI();renderWelcome();$('#keyStatus').textContent='Keys removed from this browser.'});
 $('#keySync').addEventListener('click',async()=>{
   const st=$('#keyStatus');
-  state.key=$('#keyInput').value.trim();
+  state.key=$('#keyInput').value.trim();state.key2=$('#keyInput2').value.trim();if(state.key2===state.key)state.key2='';
+  if(!state.key&&state.key2){state.key=state.key2;state.key2=''}
+  keyPick=0;
   if(!state.key){st.textContent='Paste a key first.';return}
   st.textContent='Asking Google which versions your key can use...';
-  try{const r=await syncModels();LS.set('key',state.key);updateKeyUI();st.textContent='Found '+r.t+' chat versions and '+r.i+' image models. Pick one in the version menu at the bottom.'}
+  try{const r=await syncModels();LS.set('key',state.key);if(state.key2)LS.set('key2',state.key2);else LS.del('key2');updateKeyUI();st.textContent='Found '+r.t+' chat versions and '+r.i+' image models. Pick one in the version menu at the bottom.'}
   catch(e){st.textContent=e.message}
 });
 
@@ -916,7 +950,7 @@ async function streamGemini({model,contents,system,signal,onText}){
   if(system)body.systemInstruction={parts:[{text:system}]};
   let res;
   try{
-    res=await fetch(API+'/models/'+encodeURIComponent(model)+':streamGenerateContent?alt=sse',{method:'POST',signal,headers:{'Content-Type':'application/json','x-goog-api-key':state.key},body:JSON.stringify(body)});
+    res=await gfetch(API+'/models/'+encodeURIComponent(model)+':streamGenerateContent?alt=sse',{method:'POST',signal,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   }catch(e){throw netError(e)}
   if(!res.ok)throw await apiError(res);
   const reader=res.body.getReader(),dec=new TextDecoder();
@@ -951,7 +985,7 @@ async function generateImage({model,prompt,aspect,refs,signal}){
     if(withConfig&&aspect)gc.imageConfig={aspectRatio:aspect};
     let res;
     try{
-      res=await fetch(API+'/models/'+encodeURIComponent(model)+':generateContent',{method:'POST',signal,headers:{'Content-Type':'application/json','x-goog-api-key':state.key},body:JSON.stringify({contents:[{role:'user',parts}],generationConfig:gc})});
+      res=await gfetch(API+'/models/'+encodeURIComponent(model)+':generateContent',{method:'POST',signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{role:'user',parts}],generationConfig:gc})});
     }catch(e){throw netError(e)}
     if(!res.ok){const err=await apiError(res);if(res.status===400&&/modalit/i.test(err.message))return 'MOD';if(withConfig&&res.status===400&&/imageconfig|aspect/i.test(err.message))return null;throw err}
     return res.json();
@@ -1245,6 +1279,16 @@ $('#newChat').addEventListener('click',()=>{
 const IMG_RULE='You can make images right inside this chat. When the person asks you to draw, create, generate, design, edit or show a picture, image, logo, wallpaper, poster, sprite, avatar, art or photo, reply with ONE short friendly line, then on its own line write [[IMAGE: a vivid, detailed description of the image: subject, style, colours, lighting, composition]]. If they attached an image and want it changed, describe the full change. Never say you cannot make images and never fake it with ASCII art or SVG. Use that line for nothing else.';
 const IMG_RE=/\[\[IMAGE:([\s\S]*?)\]\]/i,hideImg=t=>t.replace(/\[\[IMAGE:[\s\S]*?(\]\]|$)/gi,''),keepImg=t=>t.replace(/\[\[IMAGE:([\s\S]*?)\]\]/gi,'[Image generated: $1]');
 const IMG_FALLBACK=['gemini-3.1-flash-image','gemini-2.5-flash-image','gemini-3-pro-image-preview','gemini-3-pro-image'];
+async function freeImage(prompt,aspect,signal){
+  const m=/^(\d+):(\d+)$/.exec(aspect||''),r=m?(+m[1])/(+m[2]):1,q=v=>Math.max(256,Math.round(v/8)*8);
+  const w=r>=1?1024:q(1024*r),h=r>=1?q(1024/r):1024;
+  const url='https://image.pollinations.ai/prompt/'+encodeURIComponent(prompt.slice(0,800))+'?width='+w+'&height='+h+'&model=flux&nologo=true&seed='+Math.floor(Math.random()*1e9)+'&referrer=musketeers';
+  let res;try{res=await fetch(url,{signal})}catch(e){throw netError(e)}
+  if(res.status===429)throw new Error('The free backup is busy. Wait about 15 seconds and ask again.');
+  if(!res.ok)throw new Error('The free backup could not make that picture ('+res.status+'). Try again in a moment.');
+  const blob=await res.blob();if(!/^image\//.test(blob.type))throw new Error('The free backup did not send a picture. Try again in a moment.');
+  return{images:[{mime:blob.type,data:await b64FromBlob(blob)}],text:'Made with the free backup image maker (Pollinations), because your Gemini key has no image quota.',model:'pollinations'};
+}
 async function generateImageSmart(o){
   const cand=[o.model].concat((state.iList||[]).map(m=>m[0]),IMG_FALLBACK).filter((m,i,a)=>m&&a.indexOf(m)===i).slice(0,5);let last;
   for(const m of cand){
@@ -1254,11 +1298,18 @@ async function generateImageSmart(o){
       r.model=m;return r;
     }catch(e){
       last=e;if(e.name==='AbortError')throw e;
-      const skip=e.status===404||e.status===403||(e.status===400&&/not (found|supported)|unsupported|does not support|rejected the request/i.test(e.message));
+      const skip=e.status===404||e.status===403||e.status===429||(e.status===400&&/not (found|supported)|unsupported|does not support|rejected the request/i.test(e.message));
       if(!skip)break;
     }
   }
-  if(last&&last.status===429)last.message+=' Tip: Gemini image models often have no free quota. Turn on billing for your key in Google AI Studio, or wait a minute and try again.';
+  if(last&&last.status===429){
+    const raw=(last.message.match(/\(([^)]*)\)\s*$/)||['',''])[1].slice(0,110);
+    const orig=new Error('Your Gemini key has no quota for image models right now. Google usually only allows them on a paid plan: turn on billing for the key in Google AI Studio, or use the free backup image maker in Settings.'+(raw?' ('+raw+')':''));orig.status=429;
+    let on=LS.get('freeImg');
+    if(on!=='1'&&on!=='0'){on=confirm('Your Gemini key has no image quota.\n\nUse the free backup image maker instead (Pollinations)? Your picture description will be sent to pollinations.ai, not Google. You can switch this off in Settings.')?'1':'0';LS.set('freeImg',on)}
+    if(on==='1'){try{return await freeImage(o.prompt,o.aspect,o.signal)}catch(e2){if(e2.name==='AbortError')throw e2;orig.message+=' Backup said: '+e2.message}}
+    throw orig;
+  }
   throw last;
 }
 function paintBox(md$,keep){
@@ -1736,7 +1787,7 @@ async function ttsRequest(model,text,voice,signal){
   const vc=call.shape?{prebuiltVoiceConfig:{voiceName:voice}}:{voice};
   let res;
   try{
-    res=await fetch(API+'/models/'+encodeURIComponent(model)+':generateContent',{method:'POST',signal,headers:{'Content-Type':'application/json','x-goog-api-key':state.key},body:JSON.stringify({contents:[{role:'user',parts:[{text}]}],generationConfig:{responseModalities:['AUDIO'],speechConfig:{voiceConfig:vc}}})});
+    res=await gfetch(API+'/models/'+encodeURIComponent(model)+':generateContent',{method:'POST',signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{role:'user',parts:[{text}]}],generationConfig:{responseModalities:['AUDIO'],speechConfig:{voiceConfig:vc}}})});
   }catch(e){throw netError(e)}
   if(!res.ok)throw await apiError(res);
   const j=await res.json();
@@ -2005,9 +2056,10 @@ $('#callForm').addEventListener('submit',async e=>{
 $$('[data-logo]').forEach(i=>{i.src=LOGO});
 const fav=document.createElement('link');fav.rel='icon';fav.href=LOGO;document.head.append(fav);
 /* ---------- profiles ---------- */
-const VERSION='2.6';
+const VERSION='2.7';
 const CHANGELOG=[
-  {v:'2.6',d:'Latest',items:['Images are far more reliable: say “draw…”, “make a logo…” or “generate a picture of…” and Musketeers paints it straight away. If an image model is not available on your key it automatically tries the next one and remembers what worked.','A live timer shows while it paints, and image errors now say exactly what to fix.']},
+  {v:'2.7',d:'Latest',items:['Free backup image maker: if your Gemini key has no image quota, Musketeers can paint with a free service (Pollinations) instead. It asks you once, and you can switch it on or off in Settings under Images.','Clearer image errors that say what to fix.']},
+  {v:'2.6',d:'Earlier',items:['Images are far more reliable: say “draw…”, “make a logo…” or “generate a picture of…” and Musketeers paints it straight away. If an image model is not available on your key it automatically tries the next one and remembers what worked.','A live timer shows while it paints, and image errors now say exactly what to fix.']},
   {v:'2.5',d:'Earlier',items:['Make images right in the chat: just ask, like “draw a neon dragon” or “make me a logo”. No need to switch to Image mode. Attach a photo and say what to change to edit it. Every picture has Download and Edit buttons.']},
   {v:'2.4',d:'Earlier',items:['Cleaner three-line menu: it now only shows your chats, with Settings at the top. About you, Export this chat and Delete all chats moved into Settings.','Smarter answers: Musketeers plans before replying, double-checks maths and code, asks one short question only when it really needs to, and tells you when it is unsure instead of guessing.','Cooler look: glowing aurora background, shimmering logo, glassy header, menus and dialogs, smooth message animations and neon hover effects.']},
   {v:'2.3',d:'Earlier',items:['Musketeers now has a temper: he can swear, but only when he is really mad. Turn it off any time in Settings under Personality.']},
@@ -2203,6 +2255,7 @@ function openSettings(){
   $('#rateVal').textContent=rateNow().toFixed(2)+'x';$('#pitchVal').textContent=pitchNow().toFixed(2)+'x';
   $('#readAloud').checked=LS.get('readAloud')==='1';
   $('#temperChk').checked=LS.get('temper','1')==='1';
+  $('#freeImgChk').checked=LS.get('freeImg')==='1';
   $('#sizeRng').value=LS.get('textSize','1')||1;$('#sizeVal').textContent=Math.round(applySize()*100)+'%';
   openDlg(setDlg);
 }
@@ -2223,12 +2276,13 @@ $('#rateRng').addEventListener('input',e=>{LS.set('rate',e.target.value);$('#rat
 $('#pitchRng').addEventListener('input',e=>{LS.set('pitch',e.target.value);$('#pitchVal').textContent=(+e.target.value).toFixed(2)+'x'});
 $('#readAloud').addEventListener('change',e=>{if(e.target.checked)LS.set('readAloud','1');else LS.del('readAloud')});
 $('#voicePrev').addEventListener('click',speakPreview);
+$('#freeImgChk').addEventListener('change',e=>{LS.set('freeImg',e.target.checked?'1':'0');toast(e.target.checked?'Free backup image maker is on':'Free backup image maker is off')});
 $('#temperChk').addEventListener('change',e=>{LS.set('temper',e.target.checked?'1':'0');toast(e.target.checked?'He may swear when he is really mad':'Musketeers will keep it clean')});
 function applySize(){const z=parseFloat(LS.get('textSize','1'))||1;document.documentElement.style.setProperty('--cz',String(z));return z}
 $('#sizeRng').addEventListener('input',e=>{LS.set('textSize',e.target.value);const z=applySize();$('#sizeVal').textContent=Math.round(z*100)+'%'});
 $('#bkExport').addEventListener('click',()=>{
   const data={};
-  try{Object.keys(localStorage).filter(k=>k.startsWith('musketeers.')&&k!=='musketeers.key'&&k!=='musketeers.activeProfile').forEach(k=>{data[k]=localStorage.getItem(k)})}catch(e){}
+  try{Object.keys(localStorage).filter(k=>k.startsWith('musketeers.')&&k!=='musketeers.key'&&k!=='musketeers.key2'&&k!=='musketeers.activeProfile').forEach(k=>{data[k]=localStorage.getItem(k)})}catch(e){}
   saveBlob('musketeers-backup-'+new Date().toISOString().slice(0,10)+'.json','application/json',JSON.stringify({app:'musketeers',version:1,exported:new Date().toISOString(),data}));
   toast('Backup downloaded');
 });
@@ -2238,7 +2292,7 @@ $('#bkFile').addEventListener('change',async e=>{
   try{
     const j=JSON.parse(await f.text());
     if(!j||j.app!=='musketeers'||typeof j.data!=='object')throw new Error('bad');
-    const keys=Object.keys(j.data).filter(k=>k.startsWith('musketeers.')&&k!=='musketeers.key'&&k!=='musketeers.activeProfile');
+    const keys=Object.keys(j.data).filter(k=>k.startsWith('musketeers.')&&k!=='musketeers.key'&&k!=='musketeers.key2'&&k!=='musketeers.activeProfile');
     if(!confirm('Restore '+keys.length+' saved items from this backup? Matching items on this device will be replaced.'))return;
     keys.forEach(k=>{try{localStorage.setItem(k,String(j.data[k]))}catch(x){}});
     try{PF.save(PF.list())}catch(x){}
